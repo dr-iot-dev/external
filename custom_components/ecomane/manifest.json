@@ -1,11 +1,11 @@
 {
   "domain": "ecomane",
   "name": "Panasonic Eco Mane HEMS",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "codeowners": ["@dr-iot-dev"],
   "config_flow": true,
   "dependencies": [],
-  "documentation": "https://github.com/your_username/your_repo",
+  "documentation": "https://github.com/dr-iot-dev/external",
   "homekit": {},
   "iot_class": "cloud_polling",
   "requirements": [],
