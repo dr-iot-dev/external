@@ -54,10 +54,8 @@ class EcoManeUsageSensorEntityDescription(SensorEntityDescription):
 # 使用量センサーのエンティティのディスクリプションのリストを作成
 ecomane_usage_sensors_descs = [
     EcoManeUsageSensorEntityDescription(
-        # name="購入電気量",
         name="electricity_purchased",
         translation_key="electricity_purchased",
-        # description="Electricity purchased",
         description="Electricity purchased 購入電気量",
         key="num_L1",
         device_class=SensorDeviceClass.ENERGY,
@@ -124,7 +122,11 @@ ecomane_usage_sensors_descs = [
 class EcoManeDataCoordinator(DataUpdateCoordinator):
     """EcoMane Data coordinator."""
 
-    def __init__(self, hass: HomeAssistant, ip: str) -> None:
+    _attr_power_sensor_total: int
+    _attr_usage_sensor_descs: list[EcoManeUsageSensorEntityDescription]
+    data_dict: dict[str, str]
+
+    def __init__(self, hass: HomeAssistant, ip_address: str) -> None:
         """Initialize my coordinator."""
         super().__init__(
             hass,
@@ -134,12 +136,14 @@ class EcoManeDataCoordinator(DataUpdateCoordinator):
                 seconds=POLLING_INTERVAL
             ),  # data polling interval
         )
-        self._ip = ip
-        self._dict: dict[str, str] = {}
+
+        self._data_dict = {"ip_address": ip_address}
         self._session = None
-        self._power_sensor_total = 0
         self._power_sensor_count = 0
-        self._usage_sensor_descs = ecomane_usage_sensors_descs
+        self._ip_address = ip_address
+
+        self._attr_power_sensor_total = 0
+        self._attr_usage_sensor_descs = ecomane_usage_sensors_descs
 
     def natural_number_generator(self) -> Generator:
         """Natural number generator."""
@@ -148,22 +152,21 @@ class EcoManeDataCoordinator(DataUpdateCoordinator):
             yield count
             count += 1
 
-    async def _async_update_data(self) -> dict:
+    async def _async_update_data(self) -> dict[str, str]:
         """Update Eco Mane Data."""
-        _LOGGER.debug("Updating EcoMane data")  # debug
+
+        _LOGGER.debug("_async_update_data: Updating EcoMane data")  # debug
         await self.update_usage_data()
         await self.update_power_data()
-        _LOGGER.info("EcoMane data updated")  # info
-        return self._dict
+        return self._data_dict
 
     async def update_usage_data(self) -> None:
         """Update usage data."""
 
         _LOGGER.debug("update_usage_data")
-        # response = None
         try:
             # デバイスからデータを取得
-            url = f"http://{self._ip}/{SENSOR_TODAY_CGI}"
+            url = f"http://{self._ip_address}/{SENSOR_TODAY_CGI}"
             async with aiohttp.ClientSession() as session:
                 response: aiohttp.ClientResponse = await session.get(url)
                 if response.status != 200:
@@ -183,7 +186,7 @@ class EcoManeDataCoordinator(DataUpdateCoordinator):
         except Exception as err:
             _LOGGER.error("Error updating usage data: %s", err)
             raise UpdateFailed("update_usage_data failed") from err
-            raise
+        # finally:
 
     async def parse_usage_data(self, text: str) -> dict:
         """Parse data from the content."""
@@ -196,24 +199,25 @@ class EcoManeDataCoordinator(DataUpdateCoordinator):
             div = soup.find("div", id=key)
             if div:
                 value = div.text.strip()
-                self._dict[key] = value
+                self._data_dict[key] = value
             # self._dict[key] = value
-        return self._dict
+        return self._data_dict
 
     async def update_power_data(self) -> dict:
         """Update power data."""
 
         _LOGGER.debug("update_power_data")
-        # response = None
         try:
             # デバイスからデータを取得
-            url = f"http://{self._ip}/{SENSOR_POWER_CGI}"
+            url = f"http://{self._ip_address}/{SENSOR_POWER_CGI}"
             async with aiohttp.ClientSession() as session:
                 self._power_sensor_count = 0
                 for (
                     page_num
                 ) in self.natural_number_generator():  # 1ページ目から順に取得
-                    url = f"http://{self._ip}/{SENSOR_POWER_CGI}&page={page_num}"
+                    url = (
+                        f"http://{self._ip_address}/{SENSOR_POWER_CGI}&page={page_num}"
+                    )
                     response: aiohttp.ClientResponse = await session.get(url)
                     if response.status != 200:
                         _LOGGER.error(
@@ -229,17 +233,17 @@ class EcoManeDataCoordinator(DataUpdateCoordinator):
                     total_page = await self.parse_power_data(text_data, page_num)
                     if page_num >= total_page:
                         break
-                self._power_sensor_total = self._power_sensor_count
+                self._attr_power_sensor_total = self._power_sensor_count
                 _LOGGER.debug(
-                    "Total number of power sensors = %s", self._power_sensor_total
+                    "Total number of power sensors = %s", self._attr_power_sensor_total
                 )
-                _LOGGER.debug("EcoMane power data updated successfully")
         except Exception as err:
             _LOGGER.error("Error updating power data: %s", err)
             raise UpdateFailed("update_power_data failed") from err
         # finally:
 
-        return self._dict
+        _LOGGER.debug("EcoMane power data updated successfully")
+        return self._data_dict
 
     async def parse_power_data(self, text: str, page_num: int) -> int:
         """Parse data from the content."""
@@ -270,19 +274,21 @@ class EcoManeDataCoordinator(DataUpdateCoordinator):
 
                 # 場所
                 if isinstance(element, Tag):
-                    self._dict[f"{prefix}_{SELECTOR_PLACE}"] = element.get_text()  # txt
+                    self._data_dict[f"{prefix}_{SELECTOR_PLACE}"] = (
+                        element.get_text()
+                    )  # txt
 
                 # 回路
                 element = div_element.find("div", class_=SELECTOR_CIRCUIT)  # txt2
                 if isinstance(element, Tag):
-                    self._dict[f"{prefix}_{SELECTOR_CIRCUIT}"] = (
+                    self._data_dict[f"{prefix}_{SELECTOR_CIRCUIT}"] = (
                         element.get_text()
                     )  # txt2
 
                 # 電力
                 element = div_element.find("div", class_=SELECTOR_POWER)  # num
                 if isinstance(element, Tag):
-                    self._dict[prefix] = element.get_text().split("W")[0]
+                    self._data_dict[prefix] = element.get_text().split("W")[0]
 
                 # 電力センサーエンティティ数をカウント
                 self._power_sensor_count += 1
@@ -293,7 +299,7 @@ class EcoManeDataCoordinator(DataUpdateCoordinator):
                     page_num,
                     div_id,
                     prefix,
-                    self._dict[prefix],
+                    self._data_dict[prefix],
                 )
             else:
                 _LOGGER.debug("div_element not found div_id:%s", div_id)
@@ -306,7 +312,7 @@ class EcoManeDataCoordinator(DataUpdateCoordinator):
 
         while True:
             try:
-                await self._async_update_data()
+                self.data = await self._async_update_data()
                 break
             except UpdateFailed as err:
                 _LOGGER.warning(
@@ -317,21 +323,16 @@ class EcoManeDataCoordinator(DataUpdateCoordinator):
                 await asyncio.sleep(RETRY_INTERVAL)  # Retry interval
 
     @property
-    def dict(self) -> dict[str, str]:
-        """ElecCheck Dictionary."""
-        return self._dict
-
-    @property
     def power_sensor_total(self) -> int:
         """Total number of power sensors."""
-        return self._power_sensor_total
+        return self._attr_power_sensor_total
 
     @property
     def usage_sensor_descs(self) -> list[EcoManeUsageSensorEntityDescription]:
         """Usage sensor descriptions."""
-        return self._usage_sensor_descs
+        return self._attr_usage_sensor_descs
 
     @property
     def ip_address(self) -> str:
         """IP address."""
-        return self._ip
+        return self._data_dict["ip_address"]
